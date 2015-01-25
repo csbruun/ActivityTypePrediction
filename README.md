@@ -21,3 +21,5 @@ The script was originally created using a version of the dataset downloaded on 2
 
 
 ### To View the Page
+You can view the report in HTML at the following link:
+http://csbruun.github.io/ActivityTypePrediction/Activity_Type_Prediction.html
