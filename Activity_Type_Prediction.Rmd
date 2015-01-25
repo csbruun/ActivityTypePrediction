@@ -1,0 +1,153 @@
+---
+title: "Activity Type Prediction in Human Activity Recognition Data"
+author: "Christian Bruun"
+date: "Sunday, January 25, 2015"
+output: html_document
+---
+
+In this document we analyze exercise data from the Human Activity Recognition dataset, and attempt to fit a model that classifies the type of activity based on sensor data.  We utilize a random forest method to fit a model, and achieve 97% accuracy in predicting activity type based on sensor data.
+
+
+## Introduction
+The data in this analysis is obtained from the Human Activity Recognition dataset.  It consists of data obtained from movement sensors on several test subjects while they were performing one of 5 different activities.  We wish to use the sensor data to predict what activity each subject was doing when the data was collected.
+
+See the following page for information on the dataset itself: http://groupware.les.inf.puc-rio.br/har
+
+
+## Data Loading
+The data consists of two sets: a training set consisting of 19,622 observations, and a testing set consisting of 20 observations (this will not be used in this analysis).  The data was accessed on January 25, 2015.
+
+```{r}
+## Load libraries to be used
+library(caret)
+library(randomForest)
+
+## Download data files
+train_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+if (!file.exists("pml-training.csv")) {
+  download.file(train_url, destfile = "pml-training.csv", mode="wb")
+  trainDateDownloaded <- date()
+}
+
+test_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+if (!file.exists("pml-testing.csv")) {
+  download.file(test_url, destfile = "pml-testing.csv", mode="wb")
+  testDateDownloaded <- date()
+}
+
+## Load data as data frame
+## Set empty strings and "#DIV/0!" to NA
+training <- read.csv("pml-training.csv", na.strings=c("","#DIV/0!"))
+testing <- read.csv("pml-testing.csv", na.strings=c("","#DIV/0!"))
+```
+
+The training dataset contains 160 data columns, including 7 data columns identifying the trial number, subject name, and date of observation; 152 columns containing data from activity sensors, and the "classe" column identifying the activity type.
+
+
+## Exploratory Analyses
+For the purpose of this analysis, we will not consider trial number, user name, or date of observation as predictors in our model, so we remove these from the dataset.
+
+```{r}
+## Remove columns unrelated to model
+## x, user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp,
+## new_window, and num_window
+training <- training[-c(1,2,3,4,5,6,7)]
+testing <- testing[-c(1,2,3,4,5,6,7)]
+```
+
+A quick inspection of the data shows that there are several variables that have very low variability in the observations, and will probably not be useful as predictors.  We remove these from the dataset.
+
+```{r}
+## Remove near zero var variables
+nzVar <- nearZeroVar(training)
+training <- training[-nzVar]
+testing <- testing[-nzVar]
+```
+
+There are also several variables that contain only a small number of total observations (all have fewer than 500 observations in the training set), with all other data points as "NA".  These also are not useful for our model, so we remove them from the dataset.  We will be using a random forest method in our predictive model, so this will also save us from having to impute the missing values in the dataset.
+
+```{r}
+## Find columns containing NA values and remove them also
+na_vals <- which(apply(training, 2, function(x) sum(is.na(x)) > 0))
+training <- training[-na_vals]
+testing <- testing[-na_vals]
+```
+
+The resulting dataset has only 52 predictors from the sensor data columns and one column for the "classe" outcome variable.  We also note that all of the sensor data columns are either of type "integer" or "numeric", so we may treat these as numerics for the purpose of modeling.
+
+A quick plot of activity type against each of the remaining variables shows that, while the observations are generally evenly distributed among each activity class, the observations in each sensor data are often split into two or more classes.  Presumably, this indicates whether or not the sensor was actuated.  For example, see the following plot:
+
+```{r}
+qplot(roll_belt, classe, data=training)
+```
+
+This suggests that it may be useful to cluster the predictor variables into factor classes.  This was not done for this model, but may be useful to investigate for future improvements to the model.
+
+A comparison of the pairwise correlations between the remaining sensor variables shows there is a high correlation between many of the variables.
+
+```{r}
+M <- abs(cor(training[,-53]))
+diag(M) <- 0
+which(M > 0.8, arr.ind=T)
+```
+
+For this reason, we will want to use principal components to preprocess our model inputs and decrease the number of predictors.
+
+
+## Model Selection
+To fit our model, we first separate the training data into a training set and a verification set.
+
+```{r}
+## Separate into sample and outSample data sets for testing purposes
+## Variable to be predicted is 'classe'
+#set.seed(13552)
+set.seed(1362)
+inSampleFilter <- createDataPartition(y=training$classe, p=0.7, list=FALSE)
+inSample <- training[inSampleFilter,]
+outSample <- training[-inSampleFilter,]
+```
+
+We fit the model on the training set.  Once we have a model, we validate it against the verification set.
+
+As noted above, we use a random forest model.  This was chosen because we would like to classify the activities into one of five types, and we do not know a priori any information that can tell us which predictors might be more useful in this classification.
+
+Also, as noted above, we use PCA to preprocess the predictors.  The choice of 30 PCA components is made only to limit the total number of predictors.
+
+```{r}
+## Specify OOB resampling for randomForest
+## and limit to 30 PCA components 
+fitControl <- trainControl(method="oob",
+                           preProcOptions=c(pcaComp=30))
+
+## Fit model using randomForest
+## Preprocess with PCA
+model <- train(classe ~ .,
+               method="rf", 
+               data=inSample,
+               preProcess=c("pca"),
+               trControl=fitControl)
+```
+
+The resulting model reports an expected accuracy of 97.5%.
+
+```{r}
+model
+```
+
+
+## Model Analyses
+We can apply our model results to the testing and verification data to check the accuracy estimate.
+
+```{r}
+pred1 <- predict(model, inSample)
+pred2 <- predict(model, outSample)
+
+sum(pred1 == inSample$classe) / nrow(inSample)
+sum(pred2 == outSample$classe) / nrow(outSample)
+```
+
+We find that the model has 100% accuracy on the testing set, and 97.8% accuracy on the verification set.  This closely agrees with the estimate from the model fit.
+
+
+## Summary
+We analyzed the HAR dataset and fit a random forest model to predict the activity type based on activity sensor data.  Our model achieved 97% accuracy against our testing set.
